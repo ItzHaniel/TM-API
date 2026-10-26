@@ -1,0 +1,91 @@
+version: '3.9'
+
+# ────────────────────────────────────────────────────────────────────────────
+# TMAPI — Full stack: Spring Boot API + PostgreSQL + Redis
+# ────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: tmapi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       tmapi
+      POSTGRES_USER:     tmapi
+      POSTGRES_PASSWORD: tmapi_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tmapi -d tmapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tmapi-net
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: tmapi-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tmapi-net
+
+  # ── Spring Boot API ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tmapi-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database
+      POSTGRES_URL:      jdbc:postgresql://postgres:5432/tmapi
+      POSTGRES_USER:     tmapi
+      POSTGRES_PASSWORD: tmapi_secret
+
+      # Redis
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+
+      # JWT — override in production with a proper secret!
+      JWT_SECRET:        ${JWT_SECRET:-NHgxMmQ4YTliN2M2ZTVmNGEzYjJjMWQwZTlmOGE3YjZjNWQ0ZTNm}
+      JWT_EXPIRATION_MS: 3600000
+      JWT_REFRESH_EXPIRATION_MS: 86400000
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    networks:
+      - tmapi-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  tmapi-net:
+    driver: bridge
